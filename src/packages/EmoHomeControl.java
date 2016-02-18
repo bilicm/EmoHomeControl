@@ -2,21 +2,20 @@ package packages;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.*;
 
-import java.io.BufferedReader;
+import java.io.DataInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.net.URL;
+import java.net.URLConnection;
+import java.util.Timer;
+import java.util.TimerTask;
 
+import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.HttpClientBuilder;
-
-import java.util.Timer;
-import java.util.TimerTask;
-
-
-
 
 
 /** Simple example of JNA interface mapping and usage. */
@@ -25,6 +24,8 @@ public class EmoHomeControl
 	static HttpPost postChange;
 	static Timer timer = new Timer();
     static boolean timeout = false;
+    static private String auth = null;
+    static private String apiLoc = null;
 	
     public static void main(String[] args) 
     {
@@ -35,36 +36,23 @@ public class EmoHomeControl
     	short enginePort		= 3008;
     	int option 				= 1;
     	int state  				= 0;
+		int actionState			= 0;
     	
     	userID = new IntByReference(0);
-    	
-    	switch (option) {
-		case 1:
-		{
-			//Connect to EmoEngine
-			if (Edk.INSTANCE.EE_EngineRemoteConnect("127.0.0.1", enginePort, "Emotiv Systems-5") != EdkErrorCode.EDK_OK.ToInt()) {
-				System.out.println("Emotiv Engine start up failed.");
-				return;
-			}
-			System.out.println("Connected to EmoEngine on [127.0.0.1]");
-			break;
-		}
-		case 2:
-		{
-			//Connect to EmoComposer
-			System.out.println("Target IP of EmoComposer: [127.0.0.1] ");
+    	    	
 
-			if (Edk.INSTANCE.EE_EngineRemoteConnect("127.0.0.1", composerPort, "Emotiv Systems-5") != EdkErrorCode.EDK_OK.ToInt()) {
-				System.out.println("Cannot connect to EmoComposer on [127.0.0.1]");
-				return;
-			}
-			System.out.println("Connected to EmoComposer on [127.0.0.1]");
-			break;
-		}
-		default:
-			System.out.println("Invalid option...");
+		//Connect to EmoEngine
+		if (Edk.INSTANCE.EE_EngineRemoteConnect("127.0.0.1", enginePort, "Emotiv Systems-5") != EdkErrorCode.EDK_OK.ToInt()) {
+			System.out.println("Emotiv Engine start up failed.");
 			return;
-    	}
+		}
+		System.out.println("Connected to EmoEngine on [127.0.0.1]");
+    	
+    	auth = httpCookie();
+    	
+    	PropertiesFile prop = new PropertiesFile("config.properties");
+    	
+    	apiLoc = prop.getApiLocation();
     	
 		while (true) 
 		{
@@ -93,16 +81,15 @@ public class EmoHomeControl
 					System.out.println(EmoState.INSTANCE.ES_CognitivGetCurrentActionPower(eState));
 					
 					//Check for pushing action at a power over 5.0 and timeout false
-					if ((EmoState.INSTANCE.ES_CognitivGetCurrentAction(eState) == 2) && (EmoState.INSTANCE.ES_CognitivGetCurrentActionPower(eState) > 0.5) && (timeout == false)) {
+					actionState = EmoState.INSTANCE.ES_CognitivGetCurrentAction(eState);
+					if (((actionState == 2) || (actionState ==4)) && (EmoState.INSTANCE.ES_CognitivGetCurrentActionPower(eState) > 0.5) && (timeout == false)) {
 						System.out.println("Over");
 						try {
-							restPost();
+							restPost(actionState);
 							timerStart(true);
 						} catch (ClientProtocolException e) {
-							// TODO Auto-generated catch block
 							e.printStackTrace();
 						} catch (IOException e) {
-							// TODO Auto-generated catch block
 							e.printStackTrace();
 						}
 					}
@@ -120,42 +107,83 @@ public class EmoHomeControl
     	System.out.println("Disconnected!");
     }
     
-    public static void restPost() throws ClientProtocolException, IOException {
-    	  HttpClient client = HttpClientBuilder.create().build();
-    	  //Gets the current status of the light
-    	  HttpPost getStatus = new HttpPost("http://192.168.1.50:8083/ZWaveAPI/Run/devices%5B4%5D.instances%5B0%5D.commandClasses%5B0x25%5D.data.level.value");
-
-    	  HttpResponse statusResponse = client.execute(getStatus);
-    	  BufferedReader statusOut =  new BufferedReader(new InputStreamReader(statusResponse.getEntity().getContent()));
-    	  int status = Integer.parseInt(statusOut.readLine());
-    	  
-    	  
-    	  switch (status) {
-    	  case 0:
+    public static void restPost(int actionState) throws ClientProtocolException, IOException {
+    	
+    	  switch (actionState) {
+    	  case 4:
   			{
   				//Set light value to off
-  				postChange = new HttpPost("http://192.168.1.50:8083/ZWaveAPI/Run/devices%5B4%5D.instances%5B0%5D.commandClasses%5B0x25%5D.Set%28255%29");
+  				try {
+					URL url = new URL("http://" + apiLoc + "/ZAutomation/api/v1/devices/ZWayVDev_zway_9-0-37/command/off");
+					URLConnection conn = url.openConnection();
+
+					conn.setRequestProperty("Cookie", auth);
+
+					conn.connect();
+				  
+					DataInputStream response = new DataInputStream(conn.getInputStream());
+				  
+					System.out.print(response);
+				} catch (Exception e) {
+					auth = httpCookie();
+					e.printStackTrace();
+				}
   			}
   				break;
-    	  case 255:
+    	  case 2:
 			{
 				//Set Light value to on
-				postChange = new HttpPost("http://192.168.1.50:8083/ZWaveAPI/Run/devices%5B4%5D.instances%5B0%5D.commandClasses%5B0x25%5D.Set%280%29");
+  				try {
+					URL url = new URL("http://" + apiLoc + "/ZAutomation/api/v1/devices/ZWayVDev_zway_9-0-37/command/on");
+					URLConnection conn = url.openConnection();
+
+					conn.setRequestProperty("Cookie", auth);
+
+					conn.connect();
+				  
+					DataInputStream response = new DataInputStream(conn.getInputStream());
+				  
+					System.out.print(response);
+				} catch (Exception e) {
+					//Try to request cookie in case of failed attempt
+					auth = httpCookie();
+					e.printStackTrace();
+				}
 			}
 				break;
-  		  }
-  
-    	  
-    	  HttpClient switchClient = HttpClientBuilder.create().build();
-    	  HttpResponse statusSwitch = switchClient.execute(postChange);
-    	  BufferedReader rd = new BufferedReader(new InputStreamReader(statusSwitch.getEntity().getContent()));
-    	  String line = "";
+  		  } 
+    }
+	
+	public static String httpCookie(){
+    	
+    	HttpClient httpClient = HttpClientBuilder.create().build();
+    	String cookie = null;
+    	
+    	PropertiesFile properties = new PropertiesFile("config.properties");
+    	
+    	String authString = properties.getAuthString();
+    	String apiLocation = properties.getApiLocation();
+    	System.out.print(authString + apiLocation);
+    	
+    	try {
+            HttpPost request = new HttpPost("http://" + apiLocation + "/ZAutomation/api/v1/login");
+            StringEntity params =new StringEntity(authString);
+            request.addHeader("content-type", "application/json");
+            request.setEntity(params);
+            HttpResponse response = httpClient.execute(request);
+            Header[] headers = response.getAllHeaders();
+        	for (Header header : headers) {
+        		System.out.println("Key : " + header.getName() + " ,Value : " + header.getValue());
+        	}
 
-    	  while ((line = rd.readLine()) != null) {
-    	   System.out.println(line);
-    	  }
-    	  
- 
+        	cookie = response.getFirstHeader("Set-Cookie").getValue();
+        	
+        	System.out.print(cookie);
+        	
+        }catch (Exception ex) {
+        	System.out.println("Error while trying to authenticate with service.");
+        }
+		return cookie;
     }
     
     public static void timerStart(boolean startValue) {
@@ -166,9 +194,9 @@ public class EmoHomeControl
     			  @Override
     			  public void run() {
     			    timeout = false;
-    			    System.out.println("Timout");
+    			    System.out.println("Timeout");
     			  }
-    			}, 10000);
+    			}, 3000);
     	}
     }
 
